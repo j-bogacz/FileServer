@@ -1,39 +1,47 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.ServiceModel;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Timers;
 
 namespace FileServer
 {
     [ServiceBehavior(ConcurrencyMode = ConcurrencyMode.Reentrant)]
     public class FileBrowserService : IFileBrowserService
     {
+        #region Private members
+
         private IFileBrowserServiceCallback fileBrowserServiceCallback;
+
+        #endregion Private members
+
+        #region Constructor
 
         public FileBrowserService()
         {
-            Trace.Listeners.Add(new ConsoleTraceListener() { TraceOutputOptions = TraceOptions.DateTime });
-
             this.fileBrowserServiceCallback = OperationContext.Current.GetCallbackChannel<IFileBrowserServiceCallback>();
 
             // ToDo: Use FileSystemWatcher to notify about changes in file system
         }
 
+        #endregion Constructor
+
+        #region Public members
+
+        #region IFileBrowserService implementation
+
         public void RequestFileList(string path)
         {
             Log("New request: " + path);
 
-            // ToDo: Use file system instead of random data
             Task.Factory.StartNew(() =>
             {
                 try
                 {
                     Log("Processing request: " + path);
+
+                    // ToDo: Use file system instead of random data
                     var data = RandomDataGenerator.GetRandomData(path);
 
                     Log("Request handled: " + path);
@@ -48,10 +56,18 @@ namespace FileServer
             Log("Request queued: " + path);
         }
 
+        #endregion IFileBrowserService implementation
+
+        #endregion Public members
+
+        #region Private methods
+
         private static void Log(string message)
         {
             Console.WriteLine("{0}: {1}", DateTime.Now.ToString("HH:mm:ss.fff"), message);
         }
+
+        #endregion Private methods
     }
 
     internal class RandomDataGenerator
