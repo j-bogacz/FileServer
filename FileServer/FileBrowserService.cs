@@ -1,18 +1,22 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.ServiceModel;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace FileServer
 {
-    [ServiceBehavior(ConcurrencyMode = ConcurrencyMode.Reentrant)]
-    public class FileBrowserService : IFileBrowserService
+    [ServiceBehavior(ConcurrencyMode = ConcurrencyMode.Reentrant, InstanceContextMode = InstanceContextMode.PerSession)]
+    public class FileBrowserService : IFileBrowserService, IDisposable
     {
         #region Private members
 
         private IFileBrowserServiceCallback fileBrowserServiceCallback;
+
+        private string path;
+        private FileSystemWatcher fileSystemWatcher;
 
         #endregion Private members
 
@@ -20,9 +24,10 @@ namespace FileServer
 
         public FileBrowserService()
         {
-            this.fileBrowserServiceCallback = OperationContext.Current.GetCallbackChannel<IFileBrowserServiceCallback>();
+            Log("Creating service (client connected): " + OperationContext.Current.SessionId);
 
-            // ToDo: Use FileSystemWatcher to notify about changes in file system
+            Log("Creating callback");
+            this.fileBrowserServiceCallback = OperationContext.Current.GetCallbackChannel<IFileBrowserServiceCallback>();
         }
 
         #endregion Constructor
@@ -33,34 +38,113 @@ namespace FileServer
 
         public void RequestFileList(string path)
         {
-            Log("New request: " + path);
-
-            Task.Factory.StartNew(() =>
+            try
             {
-                try
+                if (this.fileSystemWatcher == null)
+                {
+                    Log("Creating file system watcher");
+                    this.fileSystemWatcher = new FileSystemWatcher { Path = path, EnableRaisingEvents = true };
+                    this.fileSystemWatcher.Changed += FileSystemWatcherChanged;
+                    this.fileSystemWatcher.Created += FileSystemWatcherChanged;
+                    this.fileSystemWatcher.Renamed += FileSystemWatcherChanged;
+                    this.fileSystemWatcher.Deleted += FileSystemWatcherChanged;
+                }
+                else
+                {
+                    this.fileSystemWatcher.Path = path;
+                }
+
+                Log("New request: " + path);
+                Task.Factory.StartNew(() =>
                 {
                     Log("Processing request: " + path);
 
-                    // ToDo: Use file system instead of random data
-                    var data = RandomDataGenerator.GetRandomData(path);
+                    var data = GetFileList(path);
+
+                    this.path = path;
 
                     Log("Request handled: " + path);
                     this.fileBrowserServiceCallback.FileListChanged(data);
-                }
-                catch (Exception ex)
-                {
-                    Log("Exception occured: " + ex.Message);
-                }
-            });
+                });
 
-            Log("Request queued: " + path);
+                Log("Request queued: " + path);
+            }
+            catch (Exception ex)
+            {
+                Log("Exception requesting file list: " + ex.Message);
+                throw new FaultException(ex.Message);
+            }
         }
 
         #endregion IFileBrowserService implementation
 
+        #region IDisposable implementation
+
+        public void Dispose()
+        {
+            Log("Disposing file system watcher");
+            this.fileSystemWatcher.Changed -= FileSystemWatcherChanged;
+            this.fileSystemWatcher.Created -= FileSystemWatcherChanged;
+            this.fileSystemWatcher.Renamed -= FileSystemWatcherChanged;
+            this.fileSystemWatcher.Deleted -= FileSystemWatcherChanged;
+            this.fileSystemWatcher = null;
+
+            Log("Disposing callback");
+            this.fileBrowserServiceCallback = null;
+
+            Log("Disposing service (client disconnected)");
+        }
+
+        #endregion IDisposable implementation
+
         #endregion Public members
 
         #region Private methods
+
+        public IEnumerable<FileInfo> GetFileList(string path)
+        {
+            var dir = new DirectoryInfo(path);
+
+            var directories = dir.GetDirectories().Select(directory => ToFileInfo(directory));
+            var files = dir.GetFiles().Select(file => ToFileInfo(file));
+
+            var fileList = new List<FileInfo> { new FileInfo { Name = "...", IsParent = true } };
+            fileList.AddRange(directories.Concat(files));
+
+            return fileList;
+        }
+
+        private FileInfo ToFileInfo(System.IO.FileInfo file)
+        {
+            return new FileInfo
+            {
+                Icon = IconReader.GetFileIcon(file.FullName),
+                Name = file.Name,
+                Type = FileTypeReader.GetFileType(file.FullName),
+                Created = file.CreationTime,
+                Modified = file.LastWriteTime
+            };
+        }
+
+        private FileInfo ToFileInfo(DirectoryInfo directory)
+        {
+            return new FileInfo
+            {
+                Icon = IconReader.GetFolderIcon(directory.FullName),
+                Name = directory.Name,
+                Type = FileTypeReader.GetFileType(directory.FullName),
+                Created = directory.CreationTime,
+                Modified = directory.LastWriteTime,
+                IsFolder = true
+            };
+        }
+
+        private void FileSystemWatcherChanged(object sender, FileSystemEventArgs e)
+        {
+            Log("Directory " + e.FullPath + " changed: " + e.ChangeType);
+
+            RequestFileList(this.path);
+        }
 
         private static void Log(string message)
         {
@@ -69,6 +153,9 @@ namespace FileServer
 
         #endregion Private methods
     }
+
+
+
 
     internal class RandomDataGenerator
     {
